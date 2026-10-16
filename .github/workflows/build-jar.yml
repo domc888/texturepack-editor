@@ -26,7 +26,6 @@ jobs:
 
           if [ -z "$WRAPPER" ]; then
             echo "ERROR: No gradlew found in the repository."
-            echo "Make sure you uploaded the Gradle wrapper files."
             exit 1
           fi
 
@@ -40,6 +39,34 @@ jobs:
           distribution: microsoft
           java-version: '25'
           cache: gradle
+
+      - name: Restore Gradle wrapper JAR
+        shell: bash
+        run: |
+          PROPERTIES="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
+          WRAPPER_JAR="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.jar"
+
+          if [ ! -f "$PROPERTIES" ]; then
+            echo "ERROR: gradle-wrapper.properties is missing."
+            exit 1
+          fi
+
+          VERSION=$(sed -n 's/.*gradle-\([0-9][0-9.]*\)-\(bin\|all\)\.zip.*/\1/p' "$PROPERTIES")
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Could not determine Gradle version."
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$WRAPPER_JAR")"
+
+          if [ ! -s "$WRAPPER_JAR" ]; then
+            curl -fsSL \
+              "https://raw.githubusercontent.com/gradle/gradle/v${VERSION}/gradle/wrapper/gradle-wrapper.jar" \
+              -o "$WRAPPER_JAR"
+          fi
+
+          test -s "$WRAPPER_JAR"
 
       - name: Build mod
         shell: bash
