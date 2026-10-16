@@ -1,83 +1,15 @@
-
-name: Build Pack Editor Mod
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Find Gradle project
+      - name: Locate Gradle Wrapper
         shell: bash
         run: |
-          WRAPPER=$(find . -type f -name gradlew -not -path '*/.gradle/*' -not -path '*/build/*' -print -quit)
+          WRAPPER=$(find "$PROJECT_DIR" -type f -name gradle-wrapper.properties -print -quit)
 
           if [ -z "$WRAPPER" ]; then
-            echo "ERROR: No gradlew found in the repository."
+            echo "ERROR: gradle-wrapper.properties is missing from the repository."
+            echo "The project must include its Gradle wrapper configuration or use an installed Gradle version."
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$WRAPPER")
+          WRAPPER_DIR=$(dirname "$WRAPPER")
+          PROJECT_DIR=$(dirname "$(dirname "$(dirname "$WRAPPER")")")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Gradle project: $PROJECT_DIR"
-
-      - name: Set up Java 25
-        uses: actions/setup-java@v5
-        with:
-          distribution: microsoft
-          java-version: '25'
-          cache: gradle
-
-      - name: Restore Gradle wrapper JAR
-        shell: bash
-        run: |
-          PROPERTIES="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
-          WRAPPER_JAR="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.jar"
-
-          if [ ! -f "$PROPERTIES" ]; then
-            echo "ERROR: gradle-wrapper.properties is missing."
-            exit 1
-          fi
-
-          VERSION=$(sed -n 's/.*gradle-\([0-9][0-9.]*\)-\(bin\|all\)\.zip.*/\1/p' "$PROPERTIES")
-
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: Could not determine Gradle version."
-            exit 1
-          fi
-
-          mkdir -p "$(dirname "$WRAPPER_JAR")"
-
-          if [ ! -s "$WRAPPER_JAR" ]; then
-            curl -fsSL \
-              "https://raw.githubusercontent.com/gradle/gradle/v${VERSION}/gradle/wrapper/gradle-wrapper.jar" \
-              -o "$WRAPPER_JAR"
-          fi
-
-          test -s "$WRAPPER_JAR"
-
-      - name: Build mod
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
-          chmod +x gradlew
-          ./gradlew clean build --no-daemon --stacktrace
-
-      - name: Upload mod JAR
-        uses: actions/upload-artifact@v7
-        with:
-          name: PackEditor-26.2
-          path: ${{ env.PROJECT_DIR }}/build/libs/*.jar
-          if-no-files-found: error
+          echo "WRAPPER_DIR=$WRAPPER_DIR" >> "$GITHUB_ENV"
