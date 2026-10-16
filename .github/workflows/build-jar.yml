@@ -19,40 +19,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Find Gradle project
-        shell: bash
-        run: |
-          if [ -f "./gradlew" ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          elif [ -f "./packeditor/gradlew" ]; then
-            echo "PROJECT_DIR=packeditor" >> "$GITHUB_ENV"
-          else
-            echo "ERROR: Could not find gradlew."
-            exit 1
-          fi
-
       - name: Set up Java 25
         uses: actions/setup-java@v5
         with:
           distribution: microsoft
           java-version: '25'
-
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
-
-      - name: Make Gradle wrapper executable
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: chmod +x ./gradlew
+          cache: gradle
+          cache-dependency-path: packeditor/*.gradle*
 
       - name: Build mod
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew clean build --no-daemon --stacktrace
+        working-directory: packeditor
+        run: |
+          chmod +x gradlew
+          ./gradlew clean build --no-daemon --stacktrace
 
       - name: Upload mod JAR
         uses: actions/upload-artifact@v7
         with:
           name: PackEditor-26.2
           path: |
-            ${{ env.PROJECT_DIR }}/build/libs/*.jar
-            !${{ env.PROJECT_DIR }}/build/libs/*-sources.jar
+            packeditor/build/libs/*.jar
+            !packeditor/build/libs/*-sources.jar
           if-no-files-found: error
