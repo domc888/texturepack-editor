@@ -1,12 +1,8 @@
-name: Build JAR from uploaded ZIP
+name: Build JAR
 
 on:
   workflow_dispatch:
     inputs:
-      zip_path:
-        description: 'Path to the uploaded ZIP in the repo'
-        required: true
-        default: 'packeditor-26.2-source.zip'
       jdk_version:
         description: 'JDK version to use'
         required: true
@@ -14,97 +10,104 @@ on:
   push:
     branches:
       - gng
-      - main
-      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip zip
-
-      - name: Unzip package
-        run: |
-          set -e
-          ZIP_PATH="${{ github.event.inputs.zip_path }}"
-          ZIP_PATH="${ZIP_PATH:-packeditor-26.2-source.zip}"
-          echo "Using ZIP path: $ZIP_PATH"
-
-          if [ ! -f "$ZIP_PATH" ]; then
-            echo "ZIP not found at $ZIP_PATH"
-            ls -la
-            exit 1
-          fi
-
-          rm -rf source
-          mkdir -p source
-          unzip -o "$ZIP_PATH" -d source
 
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: ${{ github.event.inputs.jdk_version || '17' }}
 
-      - name: Detect build system and build
-        id: build_step
+      - name: Build (Gradle / Maven / javac fallback)
+        id: build
         run: |
-          set -e
-          cd source || (echo "source dir missing" && exit 1)
+          set -euo pipefail
 
+          # Prefer project root (repo root) since you unzipped the sources
+          ROOT="$(pwd)"
+          echo "Project root: $ROOT"
+          cd "$ROOT"
+
+          # Gradle wrapper (preferred)
           if [ -x "./gradlew" ]; then
-            echo "build-system=gradle-wrapper" >> $GITHUB_OUTPUT
-            ./gradlew clean build --no-daemon
+            echo "Using Gradle wrapper"
+            # Try shadowJar first (fat jar) then fallback to assemble
+            ./gradlew --no-daemon clean shadowJar assemble || ./gradlew --no-daemon clean assemble
             exit 0
           fi
 
+          # Gradle (system)
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            echo "build-system=gradle" >> $GITHUB_OUTPUT
-            gradle --no-daemon clean build || true
+            echo "Using Gradle (system)"
+            gradle --no-daemon clean shadowJar assemble || gradle --no-daemon clean assemble || true
             exit 0
           fi
 
+          # Maven
           if [ -f "pom.xml" ]; then
-            echo "build-system=maven" >> $GITHUB_OUTPUT
+            echo "Using Maven"
             mvn -B -DskipTests clean package
             exit 0
           fi
 
-          echo "build-system=javac" >> $GITHUB_OUTPUT
-          find . -name '*.java' > java_files.list || true
-          if [ -s java_files.list ]; then
-            mkdir -p out/classes
-            javac -d out/classes @java_files.list
-            mkdir -p out/libs
-            (cd out/classes && jar cf ../libs/app.jar .)
-            echo "created jar at source/out/libs/app.jar"
-            exit 0
+          # Plain Java fallback
+          echo "No Gradle/Maven files found — using javac fallback"
+          # Find Java sources (prefer src/main/java)
+          SRC_DIR=""
+          if [ -d "src/main/java" ]; then
+            SRC_DIR="src/main/java"
           else
-            echo "No Java sources found to compile."
+            # first directory that contains .java files
+            SRC_DIR=$(find . -type f -name '*.java' -printf '%h\n' | sort -u | head -n 1 || true)
+          fi
+
+          if [ -z "$SRC_DIR" ]; then
+            echo "ERROR: No Java sources found."
+            find . -maxdepth 3 -print | sed -n '1,200p'
             exit 1
           fi
 
-      - name: Locate built JAR
-        id: locate_jar
+          echo "Compiling Java sources from: $SRC_DIR"
+          mkdir -p out/classes
+          find "$SRC_DIR" -name '*.java' > java_files.list
+          javac -d out/classes @java_files.list
+          mkdir -p out/libs
+          (cd out/classes && jar cf ../libs/app.jar .)
+          echo "Created jar: $(pwd)/out/libs/app.jar"
+
+      - name: Locate produced JAR(s)
+        id: collect_jars
         run: |
-          set -e
-          JAR_PATH=""
-          if [ -d source ]; then
-            JAR_PATH=$(find source -type f -name '*.jar' -not -path '*/tmp/*' | head -n 1 || true)
-          fi
-          if [ -z "$JAR_PATH" ]; then
-            echo "No JAR produced"
+          set -euo pipefail
+          # find all non-source/javadoc jars produced in repo (limit to 50)
+          JARS=$(find . -type f -name '*.jar' \
+            -not -iname '*sources*.jar' -not -iname '*javadoc*.jar' \
+            -not -path './.gradle/*' -not -path './**/.gradle/*' \
+            | sed 's|^\./||' | head -n 50 || true)
+
+          if [ -z "$JARS" ]; then
+            echo "No JARs were produced. Listing common output directories for debugging:"
+            ls -la build/libs || true
+            ls -la target || true
+            ls -la out/libs || true
             exit 1
           fi
-          echo "jar_path=$JAR_PATH" >> $GITHUB_OUTPUT
 
-      - name: Upload JAR artifact
+          echo "Found JARs:"
+          echo "$JARS"
+          # set output for upload step (newline-separated list is supported)
+          echo "jars<<EOF" >> $GITHUB_OUTPUT
+          echo "$JARS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload JAR artifact(s)
         uses: actions/upload-artifact@v4
         with:
           name: built-jar
-          path: ${{ steps.locate_jar.outputs.jar_path }}
+          path: ${{ steps.collect_jars.outputs.jars }}
