@@ -1,0 +1,110 @@
+name: Build JAR from uploaded ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: 'Path to the uploaded ZIP in the repo'
+        required: true
+        default: 'packeditor-26.2-source.zip'
+      jdk_version:
+        description: 'JDK version to use'
+        required: true
+        default: '17'
+  push:
+    branches:
+      - gng
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip zip
+
+      - name: Unzip package
+        run: |
+          set -e
+          ZIP_PATH="${{ github.event.inputs.zip_path }}"
+          ZIP_PATH="${ZIP_PATH:-packeditor-26.2-source.zip}"
+          echo "Using ZIP path: $ZIP_PATH"
+
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "ZIP not found at $ZIP_PATH"
+            ls -la
+            exit 1
+          fi
+
+          rm -rf source
+          mkdir -p source
+          unzip -o "$ZIP_PATH" -d source
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ github.event.inputs.jdk_version || '17' }}
+
+      - name: Detect build system and build
+        id: build_step
+        run: |
+          set -e
+          cd source || (echo "source dir missing" && exit 1)
+
+          if [ -x "./gradlew" ]; then
+            echo "build-system=gradle-wrapper" >> $GITHUB_OUTPUT
+            ./gradlew clean build --no-daemon
+            exit 0
+          fi
+
+          if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            echo "build-system=gradle" >> $GITHUB_OUTPUT
+            gradle --no-daemon clean build || true
+            exit 0
+          fi
+
+          if [ -f "pom.xml" ]; then
+            echo "build-system=maven" >> $GITHUB_OUTPUT
+            mvn -B -DskipTests clean package
+            exit 0
+          fi
+
+          echo "build-system=javac" >> $GITHUB_OUTPUT
+          find . -name '*.java' > java_files.list || true
+          if [ -s java_files.list ]; then
+            mkdir -p out/classes
+            javac -d out/classes @java_files.list
+            mkdir -p out/libs
+            (cd out/classes && jar cf ../libs/app.jar .)
+            echo "created jar at source/out/libs/app.jar"
+            exit 0
+          else
+            echo "No Java sources found to compile."
+            exit 1
+          fi
+
+      - name: Locate built JAR
+        id: locate_jar
+        run: |
+          set -e
+          JAR_PATH=""
+          if [ -d source ]; then
+            JAR_PATH=$(find source -type f -name '*.jar' -not -path '*/tmp/*' | head -n 1 || true)
+          fi
+          if [ -z "$JAR_PATH" ]; then
+            echo "No JAR produced"
+            exit 1
+          fi
+          echo "jar_path=$JAR_PATH" >> $GITHUB_OUTPUT
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-jar
+          path: ${{ steps.locate_jar.outputs.jar_path }}
