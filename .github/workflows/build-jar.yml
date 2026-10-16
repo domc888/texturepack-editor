@@ -1,4 +1,4 @@
-name: Build mod JAR (packeditor)
+name: Build mod JAR
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure gradlew is executable
+      - name: Ensure gradlew is executable (if present)
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
@@ -30,39 +30,27 @@ jobs:
           distribution: temurin
           java-version: ${{ github.event.inputs.jdk_version || '25' }}
 
-      - name: Build with Gradle wrapper (prefer shadowJar)
+      - name: Build with Gradle (wrapper if healthy, otherwise install gradle)
         run: |
           set -euo pipefail
-          if [ -x "./gradlew" ]; then
-            echo "Using ./gradlew (wrapper)"
-            # Prefer shadowJar (fat jar) if plugin present, otherwise assemble
-            ./gradlew --no-daemon clean shadowJar assemble
-          else
-            echo "gradle wrapper not found, trying system gradle"
-            gradle --no-daemon clean shadowJar assemble
+
+          # Prefer wrapper when the wrapper JAR is present
+          if [ -x "./gradlew" ] && [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "Using gradle wrapper"
+            ./gradlew --no-daemon clean build
+            exit 0
           fi
 
-      - name: Locate produced JAR(s)
-        id: locate_jars
-        run: |
-          set -euo pipefail
-          # Prefer fat jars and normal jars in build/libs
-          JARS=$(find build/libs -maxdepth 1 -type f -name '*.jar' \
-            -not -iname '*sources*.jar' -not -iname '*javadoc*.jar' 2>/dev/null || true)
-          if [ -z "$JARS" ]; then
-            echo "No JARs found in build/libs; listing build tree for debug:"
-            find build -maxdepth 3 -type f -print | sed -n '1,200p' || true
-            exit 1
-          fi
-          echo "Found JARs:"
-          echo "$JARS"
-          # export newline-separated list to GITHUB_OUTPUT
-          echo "jars<<EOF" >> $GITHUB_OUTPUT
-          printf '%s\n' "$JARS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # If gradlew exists but wrapper JAR is missing, or no wrapper at all, install system gradle and run it
+          echo "Gradle wrapper not usable or missing; installing system gradle and using that"
+          sudo apt-get update -y
+          sudo apt-get install -y unzip zip gradle
+
+          # Run gradle (system)
+          gradle --no-daemon clean build
 
       - name: Upload JAR artifact(s)
         uses: actions/upload-artifact@v4
         with:
           name: packeditor-jars
-          path: ${{ steps.locate_jars.outputs.jars }}
+          path: build/libs/*.jar
