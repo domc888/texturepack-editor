@@ -1,40 +1,68 @@
-name: Build JAR
+name: Build mod JAR (packeditor)
 
 on:
   workflow_dispatch:
     inputs:
       jdk_version:
-        description: 'JDK version to use'
+        description: 'JDK version to use (project requires Java 25)'
         required: true
         default: '25'
   push:
     branches:
       - gng
-      - main
-      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 25
+      - name: Ensure gradlew is executable
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ github.event.inputs.jdk_version || '25' }}
 
-      - name: Build jar
+      - name: Build with Gradle wrapper (prefer shadowJar)
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon clean build
+          if [ -x "./gradlew" ]; then
+            echo "Using ./gradlew (wrapper)"
+            # Prefer shadowJar (fat jar) if plugin present, otherwise assemble
+            ./gradlew --no-daemon clean shadowJar assemble
+          else
+            echo "gradle wrapper not found, trying system gradle"
+            gradle --no-daemon clean shadowJar assemble
+          fi
 
-      - name: Upload jar artifact
+      - name: Locate produced JAR(s)
+        id: locate_jars
+        run: |
+          set -euo pipefail
+          # Prefer fat jars and normal jars in build/libs
+          JARS=$(find build/libs -maxdepth 1 -type f -name '*.jar' \
+            -not -iname '*sources*.jar' -not -iname '*javadoc*.jar' 2>/dev/null || true)
+          if [ -z "$JARS" ]; then
+            echo "No JARs found in build/libs; listing build tree for debug:"
+            find build -maxdepth 3 -type f -print | sed -n '1,200p' || true
+            exit 1
+          fi
+          echo "Found JARs:"
+          echo "$JARS"
+          # export newline-separated list to GITHUB_OUTPUT
+          echo "jars<<EOF" >> $GITHUB_OUTPUT
+          printf '%s\n' "$JARS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload JAR artifact(s)
         uses: actions/upload-artifact@v4
         with:
-          name: built-jar
-          path: |
-            build/libs/*.jar
+          name: packeditor-jars
+          path: ${{ steps.locate_jars.outputs.jars }}
