@@ -15,7 +15,7 @@ Delete that folder (or untick it in Resource Packs) to go back to vanilla.
 ## Build
 
 Push this folder to a GitHub repo, then Actions -> "Build mod jar" -> Run workflow.
-The jar is attached to the run as the `packeditor-26.2` artifact. Put it in `.minecraft/mods`
+GitHub gives you a .zip: open it and take the .jar inside (about 70-100 KB). Put that jar in `.minecraft/mods`
 with Fabric Loader 0.19.5+ and Fabric API for 26.2 (Java 25).
 
 Local: `./gradlew build` -> `build/libs/packeditor-1.0.0.jar`.
@@ -24,7 +24,7 @@ Local: `./gradlew build` -> `build/libs/packeditor-1.0.0.jar`.
 
 - `src/main/java/dev/packeditor/core` - all logic with no Minecraft code (recolouring, styles, pack
   writer, share codes, config). Tested standalone.
-- `src/client/java/dev/packeditor/client` - the game-facing layer. Anything that touches Minecraft's
+- `src/main/java/dev/packeditor/client` - the game-facing layer. Anything that touches Minecraft's
   API is in `Draw.java` (drawing), `Editor.java` (clipboard, screen opening, enabling the pack),
   `McTextureSource.java` (reading vanilla textures) and `PackEditorClient.java` (key binding).
   If a 26.2 build error mentions a Minecraft class or method, it will be in one of those or in the
